@@ -16,6 +16,7 @@ Linter          The main base class for linters.
 
 """
 
+from distutils import versionpredicate
 from fnmatch import fnmatch
 from functools import lru_cache
 import html.entities
@@ -69,7 +70,7 @@ class LinterMeta(type):
             if isinstance(cmd, str):
                 setattr(self, 'cmd', shlex.split(cmd))
 
-            for regex in ('regex', 'comment_re', 'word_re'):
+            for regex in ('regex', 'comment_re', 'word_re', 'version_re'):
                 attr = getattr(self, regex)
 
                 if isinstance(attr, str):
@@ -320,6 +321,11 @@ class Linter(metaclass=LinterMeta):
     # of code and returns a tuple/list which contains the name and value for the
     # inline setting, or None if there is no match.
     shebang_match = None
+
+    # some linters may require a specific version of the executable
+    version_cmd = None
+    version_re = None
+    version_requirement = None
 
     #
     # Internal class storage, do not set
@@ -1344,6 +1350,7 @@ class Linter(metaclass=LinterMeta):
             can = cls.can_lint_syntax(syntax)
 
             if can:
+                cls.validate_version()
                 settings = persist.settings
                 disabled = (
                     settings.get('@disabled') or
@@ -1373,6 +1380,33 @@ class Linter(metaclass=LinterMeta):
 
         """
         return cls.executable_path != ''
+
+    @classmethod
+    def validate_version(cls):
+        """Return whether the executable has a valid version."""
+
+        is_valid = True
+
+        version = cls.get_version()
+        if version and cls.version_requirement:
+            parsed_requirements = versionpredicate.VersionPredicate(cls.version_requirement)
+            if not parsed_requirements.satisfied_by(version):
+                is_valid = False
+                persist.printf('Version {} of {} is not supported'.format(version, cls.name))
+            else:
+                persist.printf('Version {} of {} is supported'.format(version, cls.name))
+
+        return is_valid
+
+    @classmethod
+    def get_version(cls):
+        """Return the extracted version."""
+
+        if cls.version_cmd and cls.version_re:
+            version_output = util.run_shell_cmd(cls.executable_path + cls.version_cmd)
+            match = cls.version_re.search(version_output.decode('utf8'))
+            if match:
+                return match.group('version')
 
     @staticmethod
     def replace_entity(match):
